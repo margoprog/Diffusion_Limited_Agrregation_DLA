@@ -144,7 +144,7 @@ import GUI from 'lil-gui'
 	// load particle sprite from static files with onLoad/onError fallback
 	const spriteLoader = new THREE.TextureLoader()
 	let spriteTex = null
-	const spriteUrl = 'textures/particles/3.png'
+	const spriteUrl = 'textures/particles/2.png'
 	console.log('[particles] loading sprite', spriteUrl)
 	spriteLoader.load(
 		spriteUrl,
@@ -171,9 +171,12 @@ import GUI from 'lil-gui'
 		size: 4,
 		sizeAttenuation: true,
 		transparent: true,
-		alphaTest: 0.05,
+		// lower alphaTest to properly clip tiny edges, disable depthWrite so blending looks correct
+		alphaTest: 0.01,
 		opacity: 0.95,
-		blending: THREE.AdditiveBlending
+		blending: THREE.AdditiveBlending,
+		depthWrite: false,
+		premultipliedAlpha: false
 	})
 
 	const points = new THREE.Points(geometry, material)
@@ -193,7 +196,7 @@ import GUI from 'lil-gui'
 	params.maxAggregateRadius = 60
 
 	const gui = new GUI({ width: 260 })
-	gui.add(params, 'size', 0.5, 12, 0.1).name('Particle size').onChange(v => { material.size = v; updateSeedWorldSize() })
+	gui.add(params, 'size', 4, 12, 0.1).name('Particle size').onChange(v => { material.size = v; updateSeedWorldSize() })
 	gui.add(params, 'dynamicHue').name('Dynamic hue')
 	gui.add(params, 'mode', ['angle', 'height']).name('Hue mode')
 	gui.add(params, 'saturation', 0, 1, 0.01).name('Saturation')
