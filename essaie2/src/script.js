@@ -32,12 +32,12 @@ import GUI from 'lil-gui'
   let segments = [] // store drawn segments so we can redraw when stopped
 
   const params = {
-    step: 15,
-    angleJitter: 0.68,
-    branchProb: 0.332,
-    initialLife: 151,
+    step: 19,
+    angleJitter: 0.9,
+    branchProb: 0.4,
+    initialLife: 140,
     splitLifeFactor: 0.63,
-    lineWidth: 1.6,
+    lineWidth: 2.7,
     color: '#ffffff'
   }
 
@@ -123,19 +123,21 @@ import GUI from 'lil-gui'
       const nx = b.x + Math.cos(b.angle) * params.step
       const ny = b.y + Math.sin(b.angle) * params.step
 
-      // draw segment using live params, but modulate lightness by orientation
+      // draw segment using vector-based spectrum hue (angle -> hue)
       ctx.lineWidth = params.lineWidth
-      const baseHsl = hexToHsl(params.color)
       const dx = nx - b.x
       const dy = ny - b.y
+      const angle = Math.atan2(dy, dx) // -PI..PI
+      const hueNorm = (angle / (Math.PI * 2)) + 0.5 // 0..1
+      const hueDeg = (hueNorm % 1) * 360
+      // lightness modulated by orientation relative to lightDir
       const len = Math.hypot(dx, dy) || 1
       const ux = dx / len
       const uy = dy / len
       const dot = ux * lightDir.x + uy * lightDir.y
-      const factor = (dot + 1) / 2 // 0..1
-      const extra = 0.25 * factor
-      const lnew = Math.min(1, Math.max(0, baseHsl.l + extra))
-      ctx.strokeStyle = hslToCss(baseHsl.h, baseHsl.s, lnew)
+      const lightFactor = 0.15 * ((dot + 1) / 2) // small lightness tweak
+      const l = Math.min(1, Math.max(0, 0.6 + lightFactor))
+      ctx.strokeStyle = hslToCss(hueDeg, 0.8, l)
       ctx.beginPath()
       ctx.moveTo(b.x, b.y)
       ctx.lineTo(nx, ny)
@@ -191,19 +193,20 @@ import GUI from 'lil-gui'
     ctx.fillStyle = '#000'
     ctx.fillRect(0,0,canvas.width, canvas.height)
     ctx.lineWidth = params.lineWidth
-    const baseHsl = hexToHsl(params.color)
     for(let i=0;i<segments.length;i++){
       const s = segments[i]
       const dx = s.x2 - s.x1
       const dy = s.y2 - s.y1
+      const angle = Math.atan2(dy, dx)
+      const hueNorm = (angle / (Math.PI * 2)) + 0.5
+      const hueDeg = (hueNorm % 1) * 360
       const len = Math.hypot(dx, dy) || 1
       const ux = dx / len
       const uy = dy / len
       const dot = ux * lightDir.x + uy * lightDir.y
-      const factor = (dot + 1) / 2
-      const extra = 0.25 * factor
-      const lnew = Math.min(1, Math.max(0, baseHsl.l + extra))
-      ctx.strokeStyle = hslToCss(baseHsl.h, baseHsl.s, lnew)
+      const lightFactor = 0.15 * ((dot + 1) / 2)
+      const l = Math.min(1, Math.max(0, 0.6 + lightFactor))
+      ctx.strokeStyle = hslToCss(hueDeg, 0.8, l)
       ctx.beginPath()
       ctx.moveTo(s.x1, s.y1)
       ctx.lineTo(s.x2, s.y2)
