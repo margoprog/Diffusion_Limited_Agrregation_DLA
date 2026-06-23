@@ -79,6 +79,9 @@ const rand = (min, max) =>
     return min + Math.random() * (max - min)
 }
 
+// collect particle positions for vertex coloring
+const positions = []
+
 /**
  * Branch Structure
  */
@@ -123,13 +126,26 @@ while(branches.length > 0)
     const ny = branch.y + dy
     const nz = branch.z + dz
 
-    const geometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(branch.x, branch.y, branch.z),
-        new THREE.Vector3(nx, ny, nz)
-    ])
+    // store both endpoints as particles (so every segment contributes two vertices)
+    positions.push(branch.x, branch.y, branch.z)
+    positions.push(nx, ny, nz)
 
-    const line = new THREE.Line(geometry, material)
+    // build a small smooth curve for this segment
+    const p0 = new THREE.Vector3(branch.x, branch.y, branch.z)
+    const p2 = new THREE.Vector3(nx, ny, nz)
+    // midpoint
+    const mid = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+    // direction and a perpendicular for offset
+    const dir = new THREE.Vector3().subVectors(p2, p0).normalize()
+    let normal = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize()
+    if (normal.length() < 0.001) normal = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize()
+    const offset = params.step * 0.6 * (Math.random() * 0.8 - 0.4)
+    mid.addScaledVector(normal, offset)
 
+    const curve = new THREE.CatmullRomCurve3([p0, mid, p2])
+    const curvePoints = curve.getPoints(8)
+    const curveGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
+    const line = new THREE.Line(curveGeometry, material)
     scene.add(line)
 
     branch.x = nx
@@ -191,6 +207,31 @@ const grid = new THREE.GridHelper(
 )
 
 scene.add(grid)
+
+/**
+ * Create colored points from generated positions
+ * Build HSL -> RGB gradient across all particles (0° -> 360°)
+ */
+if (positions.length > 0) {
+    const particleCount = positions.length / 3
+    const colors = []
+
+    // map color by vertex progression (index) blending red -> blue
+    for (let i = 0; i < particleCount; i++) {
+        const t = particleCount > 1 ? i / (particleCount - 1) : 0
+        const c = new THREE.Color(1, 0, 0) // red
+        c.lerp(new THREE.Color(0, 0, 1), t) // blend towards blue
+        colors.push(c.r, c.g, c.b)
+    }
+
+    const pointsGeometry = new THREE.BufferGeometry()
+    pointsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    pointsGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+
+    const pointsMaterial = new THREE.PointsMaterial({ size: 2, vertexColors: true })
+    const points = new THREE.Points(pointsGeometry, pointsMaterial)
+    scene.add(points)
+}
 
 /**
  * Resize
