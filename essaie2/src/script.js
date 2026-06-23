@@ -29,6 +29,7 @@ import GUI from 'lil-gui'
 
   // Branch structure
   let branches = []
+  let segments = [] // store drawn segments so we can redraw when stopped
 
   const params = {
     step: 15,
@@ -40,8 +41,39 @@ import GUI from 'lil-gui'
     color: '#ffffff'
   }
 
+  // helper: hex -> hsl
+  function hexToHsl(hex) {
+    const h = hex.replace('#','')
+    const bigint = parseInt(h, 16)
+    const r = (bigint >> 16) & 255
+    const g = (bigint >> 8) & 255
+    const b = bigint & 255
+    const rf = r/255, gf = g/255, bf = b/255
+    const max = Math.max(rf, gf, bf), min = Math.min(rf, gf, bf)
+    let hdeg = 0, s = 0, l = (max + min) / 2
+    if(max !== min){
+      const d = max - min
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+      switch(max){
+        case rf: hdeg = (gf - bf) / d + (gf < bf ? 6 : 0); break
+        case gf: hdeg = (bf - rf) / d + 2; break
+        case bf: hdeg = (rf - gf) / d + 4; break
+      }
+      hdeg = hdeg * 60
+    }
+    return { h: hdeg, s: s, l: l }
+  }
+
+  function hslToCss(h, s, l){
+    return `hsl(${Math.round(h)} ${Math.round(s*100)}% ${Math.round(l*100)}%)`
+  }
+
+  // light direction (pointing up): segments pointing up get brighter
+  const lightDir = { x: 0, y: -1 }
+
   function reset(){
     branches = []
+    segments = []
     // start at top center, growing downward
     branches.push({
       x: canvas.width / 2,
@@ -57,15 +89,26 @@ import GUI from 'lil-gui'
   // GUI
   try{
     const gui = new GUI({ width: 300 })
-    gui.add(params, 'step', 1, 40, 1).name('Step')
-    gui.add(params, 'angleJitter', 0, 1, 0.01).name('Angle jitter')
-    gui.add(params, 'branchProb', 0, 1, 0.001).name('Branch prob')
-    gui.add(params, 'initialLife', 4, 800, 1).name('Initial life').onChange(v => { /* new branches will use this */ })
-    gui.add(params, 'splitLifeFactor', 0, 1, 0.01).name('Split life')
-    gui.add(params, 'lineWidth', 0.2, 8, 0.1).name('Line width').onChange(v => { ctx.lineWidth = v })
-    gui.addColor(params, 'color').name('Color')
+    const cStep = gui.add(params, 'step', 1, 40, 1).name('Step')
+    const cAngle = gui.add(params, 'angleJitter', 0, 1, 0.01).name('Angle jitter')
+    const cProb = gui.add(params, 'branchProb', 0, 1, 0.001).name('Branch prob')
+    const cLife = gui.add(params, 'initialLife', 4, 800, 1).name('Initial life')
+    const cSplit = gui.add(params, 'splitLifeFactor', 0, 1, 0.01).name('Split life')
+    const cLine = gui.add(params, 'lineWidth', 0.2, 8, 0.1).name('Line width')
+    const cColor = gui.addColor(params, 'color').name('Color')
+
+    const redrawIfStopped = () => {
+      if(branches.length === 0 && segments.length > 0) redrawSegments()
+    }
+
+    cStep.onChange(redrawIfStopped)
+    cAngle.onChange(redrawIfStopped)
+    cProb.onChange(redrawIfStopped)
+    cLife.onChange(redrawIfStopped)
+    cSplit.onChange(redrawIfStopped)
+    cLine.onChange(v => { ctx.lineWidth = v; redrawIfStopped() })
+    cColor.onChange(redrawIfStopped)
   }catch(e){
-    // ignore if GUI can't be created
     console.warn('GUI failed', e)
   }
 
@@ -80,13 +123,25 @@ import GUI from 'lil-gui'
       const nx = b.x + Math.cos(b.angle) * params.step
       const ny = b.y + Math.sin(b.angle) * params.step
 
-      // draw segment using live params
+      // draw segment using live params, but modulate lightness by orientation
       ctx.lineWidth = params.lineWidth
-      ctx.strokeStyle = params.color
+      const baseHsl = hexToHsl(params.color)
+      const dx = nx - b.x
+      const dy = ny - b.y
+      const len = Math.hypot(dx, dy) || 1
+      const ux = dx / len
+      const uy = dy / len
+      const dot = ux * lightDir.x + uy * lightDir.y
+      const factor = (dot + 1) / 2 // 0..1
+      const extra = 0.25 * factor
+      const lnew = Math.min(1, Math.max(0, baseHsl.l + extra))
+      ctx.strokeStyle = hslToCss(baseHsl.h, baseHsl.s, lnew)
       ctx.beginPath()
       ctx.moveTo(b.x, b.y)
       ctx.lineTo(nx, ny)
       ctx.stroke()
+      // store segment for potential redraw when stopped
+      segments.push({ x1: b.x, y1: b.y, x2: nx, y2: ny })
 
       b.x = nx
       b.y = ny
@@ -130,6 +185,31 @@ import GUI from 'lil-gui'
   addEventListener('keydown', (e) => {
     if(e.key === 'r' || e.key === 'R') reset()
   })
+
+  // redraw stored segments with current visual params
+  function redrawSegments(){
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0,0,canvas.width, canvas.height)
+    ctx.lineWidth = params.lineWidth
+    const baseHsl = hexToHsl(params.color)
+    for(let i=0;i<segments.length;i++){
+      const s = segments[i]
+      const dx = s.x2 - s.x1
+      const dy = s.y2 - s.y1
+      const len = Math.hypot(dx, dy) || 1
+      const ux = dx / len
+      const uy = dy / len
+      const dot = ux * lightDir.x + uy * lightDir.y
+      const factor = (dot + 1) / 2
+      const extra = 0.25 * factor
+      const lnew = Math.min(1, Math.max(0, baseHsl.l + extra))
+      ctx.strokeStyle = hslToCss(baseHsl.h, baseHsl.s, lnew)
+      ctx.beginPath()
+      ctx.moveTo(s.x1, s.y1)
+      ctx.lineTo(s.x2, s.y2)
+      ctx.stroke()
+    }
+  }
 
   // expose params for console tweaking
   window.LightningParams = params
