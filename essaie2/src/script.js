@@ -116,9 +116,9 @@ import GUI from 'lil-gui'
     // perform a few steps per frame for visible growth
     for(let i=0;i<2;i++) stepBranches()
 
-    // if no branches alive, restart after a short pause
+    // if no branches alive, stop and leave final image
     if(branches.length === 0){
-      setTimeout(reset, 800)
+      return
     }
 
     requestAnimationFrame(loop)
