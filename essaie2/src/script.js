@@ -31,12 +31,12 @@ import GUI from 'lil-gui'
   let branches = []
 
   const params = {
-    step: 6,
-    angleJitter: 0.3,
-    branchProb: 0.05,
-    initialLife: 120,
-    splitLifeFactor: 0.6,
-    lineWidth: 1.0,
+    step: 15,
+    angleJitter: 0.68,
+    branchProb: 0.332,
+    initialLife: 151,
+    splitLifeFactor: 0.63,
+    lineWidth: 1.6,
     color: '#ffffff'
   }
 
