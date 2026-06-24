@@ -35,7 +35,7 @@ const params = {
   volumeType: 'sphere',
   volumeSize: 200,
   noiseScale: 0.01,
-  speed: 0.3,
+  speed: 0.2,
   pointSize: 2,
   time: 0,
   warpStrength: 0.08,
@@ -44,10 +44,15 @@ const params = {
   velocityResponse: 0.08,
   drag: 0.96,
   circulationStrength: 0.35,
-  orbitCenterCount: 9,
-  orbitRadius: 70,
-  orbitStrength: 0.8,
-  orbitPull: 0.08,
+  vortexCount: 9,
+  vortexRadius: 70,
+  vortexStrength: 0.85,
+  vortexAxisJitter: 0.2,
+  densityFieldScale: 0.015,
+  clumpStrength: 0.22,
+  airyStrength: 0.14,
+  shapeIrregularity: 0.18,
+  shapeNoiseScale: 3.2,
   inwardStrength: 0.06,
   timeSpeed: 0.2
 }
@@ -101,56 +106,86 @@ function domainWarp(x, y, z, time) {
   )
 }
 
+// Scalar density field used to create denser and airier regions
+function densityField(x, y, z, t) {
+  const s = params.densityFieldScale
+  const n1 = noise3D(x * s + t * 0.05, y * s, z * s)
+  const n2 = noise3D(x * s * 2 + 17.3, y * s * 2 - 9.1, z * s * 2 + t * 0.09) * 0.5
+  const n3 = noise3D(x * s * 4 - 23.7, y * s * 4 + 5.4, z * s * 4 - t * 0.12) * 0.25
+  return (n1 + n2 + n3) / 1.75
+}
+
+// Organic boundary multiplier in direction space (breaks perfect sphere)
+function organicRadiusMultiplier(dir, t) {
+  const s = params.shapeNoiseScale
+  const n1 = noise3D(dir.x * s + t * 0.11, dir.y * s, dir.z * s)
+  const n2 = noise3D(dir.x * s * 2 + 13.7, dir.y * s * 2 - 4.2, dir.z * s * 2 + t * 0.07) * 0.5
+  const n = (n1 + n2) / 1.5
+  return 1 + n * params.shapeIrregularity
+}
+
 let particles = []
 let geometry, material, points
-let orbitCenters = []
+let vortices = []
 
-function buildOrbitCenters() {
-  orbitCenters = []
+function buildVortices() {
+  vortices = []
+
   const shell = params.volumeSize * 0.38
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
-  for (let i = 0; i < params.orbitCenterCount; i++) {
-    const t = (i + 0.5) / params.orbitCenterCount
+  for (let i = 0; i < params.vortexCount; i++) {
+    const t = (i + 0.5) / params.vortexCount
     const y = 1 - 2 * t
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = i * goldenAngle
 
-    const pos = new THREE.Vector3(
+    const center = new THREE.Vector3(
       Math.cos(theta) * r * shell,
       y * shell,
       Math.sin(theta) * r * shell
     )
 
+    // deterministic axis per vortex
     const axis = new THREE.Vector3(
-      noise3D(pos.x * 0.02 + 7.1, pos.y * 0.02, pos.z * 0.02),
-      noise3D(pos.x * 0.02, pos.y * 0.02 + 13.7, pos.z * 0.02),
-      noise3D(pos.x * 0.02, pos.y * 0.02, pos.z * 0.02 + 19.3)
+      noise3D(center.x * 0.02 + 11.3, center.y * 0.02 + 3.7, center.z * 0.02),
+      noise3D(center.x * 0.02, center.y * 0.02 + 19.1, center.z * 0.02 + 5.2),
+      noise3D(center.x * 0.02 + 7.9, center.y * 0.02, center.z * 0.02 + 23.4)
     )
-    if (axis.lengthSq() < 1e-6) axis.set(0, 1, 0)
+    if (axis.lengthSq() < 1e-8) axis.set(0, 1, 0)
     axis.normalize()
 
-    orbitCenters.push({ pos, axis })
+    vortices.push({ center, axis, seed: i * 17.123 })
   }
 }
 
 function initParticles() {
   if (points) scene.remove(points)
-  buildOrbitCenters()
+
+  buildVortices()
   
   particles = []
   const positions = new Float32Array(params.particleCount * 3)
+  const baseRadius = params.volumeSize * 0.5
+  const dir = new THREE.Vector3()
+  const t = params.time * params.timeSpeed
   
   for (let i = 0; i < params.particleCount; i++) {
     let x, y, z
     
     if (params.volumeType === 'sphere') {
-      const radius = (Math.random() ** (1/3)) * params.volumeSize * 0.5
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
-      x = radius * Math.sin(phi) * Math.cos(theta)
-      y = radius * Math.sin(phi) * Math.sin(theta)
-      z = radius * Math.cos(phi)
+      dir.set(
+        Math.sin(phi) * Math.cos(theta),
+        Math.sin(phi) * Math.sin(theta),
+        Math.cos(phi)
+      )
+      const localRadius = baseRadius * organicRadiusMultiplier(dir, t)
+      const radius = (Math.random() ** (1 / 3)) * localRadius
+      x = radius * dir.x
+      y = radius * dir.y
+      z = radius * dir.z
     } else {
       const half = params.volumeSize * 0.5
       x = (Math.random() - 0.5) * params.volumeSize
@@ -188,11 +223,15 @@ function updateParticles() {
   const center = new THREE.Vector3(0, 0, 0)
   const tmpDesired = new THREE.Vector3()
   const tmpCirculation = new THREE.Vector3()
-  const tmpLocalOrbit = new THREE.Vector3()
-  const tmpToCenter = new THREE.Vector3()
-  const tmpTangent = new THREE.Vector3()
+  const tmpVortex = new THREE.Vector3()
+  const tmpToVortex = new THREE.Vector3()
+  const tmpLocalAxis = new THREE.Vector3()
+  const tmpTangential = new THREE.Vector3()
   const tmpRadial = new THREE.Vector3()
+  const tmpDensityGrad = new THREE.Vector3()
+  const tmpDir = new THREE.Vector3()
   const t = params.time * params.timeSpeed
+  const ge = Math.max(0.5, params.volumeSize * 0.01)
   
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
@@ -220,28 +259,59 @@ function updateParticles() {
     if (tmpRadial.lengthSq() > 0) tmpRadial.normalize()
     tmpRadial.multiplyScalar(params.inwardStrength)
 
-    // Local orbital tendency around invisible centers
-    tmpLocalOrbit.set(0, 0, 0)
-    for (let ci = 0; ci < orbitCenters.length; ci++) {
-      const c = orbitCenters[ci]
-      tmpToCenter.copy(p.pos).sub(c.pos)
-      const d = tmpToCenter.length()
-      if (d < 1e-5 || d > params.orbitRadius) continue
+    // Density shaping: particles drift toward high-density regions and leave airy pockets
+    const dpx = densityField(p.pos.x + ge, p.pos.y, p.pos.z, t)
+    const dnx = densityField(p.pos.x - ge, p.pos.y, p.pos.z, t)
+    const dpy = densityField(p.pos.x, p.pos.y + ge, p.pos.z, t)
+    const dny = densityField(p.pos.x, p.pos.y - ge, p.pos.z, t)
+    const dpz = densityField(p.pos.x, p.pos.y, p.pos.z + ge, t)
+    const dnz = densityField(p.pos.x, p.pos.y, p.pos.z - ge, t)
+    tmpDensityGrad.set(
+      (dpx - dnx) / (2 * ge),
+      (dpy - dny) / (2 * ge),
+      (dpz - dnz) / (2 * ge)
+    )
 
-      const falloff = 1 - d / params.orbitRadius
-      tmpTangent.crossVectors(c.axis, tmpToCenter)
-      if (tmpTangent.lengthSq() > 1e-10) {
-        tmpTangent.normalize().multiplyScalar(params.orbitStrength * falloff * falloff)
-        tmpLocalOrbit.add(tmpTangent)
+    const dHere = densityField(p.pos.x, p.pos.y, p.pos.z, t)
+    const airy = Math.max(0, -dHere)
+    if (p.pos.lengthSq() > 0) {
+      tmpDir.copy(p.pos).normalize()
+      tmpDensityGrad.addScaledVector(tmpDir, airy * params.airyStrength)
+    }
+    tmpDensityGrad.multiplyScalar(params.clumpStrength)
+
+    // Smaller local vortices inside the global flow
+    tmpVortex.set(0, 0, 0)
+    const vr = params.vortexRadius
+    const vr2 = vr * vr
+    for (let vi = 0; vi < vortices.length; vi++) {
+      const v = vortices[vi]
+
+      tmpToVortex.copy(p.pos).sub(v.center)
+      const d2 = tmpToVortex.lengthSq()
+      if (d2 >= vr2 || d2 < 1e-10) continue
+
+      const d = Math.sqrt(d2)
+      const falloff = 1 - d / vr
+
+      // slight temporal wobble of axis to feel organic
+      const jt = t * 0.7 + v.seed
+      tmpLocalAxis.copy(v.axis)
+      tmpLocalAxis.x += noise3D(jt, v.seed, 0.0) * params.vortexAxisJitter
+      tmpLocalAxis.y += noise3D(0.0, jt, v.seed) * params.vortexAxisJitter
+      tmpLocalAxis.z += noise3D(v.seed, 0.0, jt) * params.vortexAxisJitter
+      if (tmpLocalAxis.lengthSq() > 0) tmpLocalAxis.normalize()
+
+      tmpTangential.crossVectors(tmpLocalAxis, tmpToVortex)
+      if (tmpTangential.lengthSq() > 0) {
+        const vortexAmp = params.vortexStrength * falloff * falloff
+        tmpTangential.normalize().multiplyScalar(vortexAmp)
+        tmpVortex.add(tmpTangential)
       }
-
-      // slight inward pull to keep the particle captured by local vortex zones
-      tmpToCenter.multiplyScalar(1 / d)
-      tmpLocalOrbit.addScaledVector(tmpToCenter, -params.orbitPull * falloff)
     }
     
     // Step 2: Get directional vector from curl noise
-    tmpDesired.copy(curlVector).add(tmpCirculation).add(tmpLocalOrbit).add(tmpRadial)
+    tmpDesired.copy(curlVector).add(tmpCirculation).add(tmpVortex).add(tmpRadial).add(tmpDensityGrad)
     p.vel.lerp(tmpDesired, params.velocityResponse)
     p.vel.multiplyScalar(params.drag)
     
@@ -251,11 +321,14 @@ function updateParticles() {
     // Step 4: Apply boundary constraints (continuous field - no randomness)
     if (params.volumeType === 'sphere') {
       const distFromCenter = p.pos.length()
-      if (distFromCenter > maxRadius) {
+      if (distFromCenter > 0) {
+        tmpDir.copy(p.pos).multiplyScalar(1 / distFromCenter)
+      }
+      const localMaxRadius = maxRadius * organicRadiusMultiplier(tmpDir, t)
+      if (distFromCenter > localMaxRadius) {
         // Gradient field: push particle back toward center smoothly
-        const normal = p.pos.clone().normalize()
-        const excess = distFromCenter - maxRadius
-        p.pos.sub(normal.multiplyScalar(excess * 0.8))
+        const excess = distFromCenter - localMaxRadius
+        p.pos.sub(tmpDir.multiplyScalar(excess * 0.8))
       }
     } else {
       // Cube: wrapping continuous
@@ -298,17 +371,22 @@ import('lil-gui').then(mod => {
     const gui = new GUI({ width: 300 })
     gui.add(params, 'particleCount', 500, 15000, 100).onChange(() => initParticles())
     gui.add(params, 'volumeType', ['cube', 'sphere']).onChange(() => initParticles())
-    gui.add(params, 'volumeSize', 50, 500, 10).onChange(() => initParticles())
+    gui.add(params, 'volumeSize', 50, 500, 10).onChange(() => { initParticles(); buildVortices() })
     gui.add(params, 'noiseScale', 0.001, 0.02, 0.001)
     gui.add(params, 'speed', 0.01, 0.5, 0.01)
     gui.add(params, 'flowCoherence', 0.8, 5, 0.1).name('Flow coherence')
     gui.add(params, 'velocityResponse', 0.01, 0.3, 0.01).name('Response')
     gui.add(params, 'drag', 0.85, 0.999, 0.001).name('Drag')
     gui.add(params, 'circulationStrength', 0, 1.5, 0.01).name('Circulation')
-    gui.add(params, 'orbitCenterCount', 1, 16, 1).name('Orbit centers').onChange(() => buildOrbitCenters())
-    gui.add(params, 'orbitRadius', 20, 180, 1).name('Orbit radius')
-    gui.add(params, 'orbitStrength', 0, 2, 0.01).name('Orbit strength')
-    gui.add(params, 'orbitPull', 0, 0.4, 0.01).name('Orbit pull')
+    gui.add(params, 'vortexCount', 1, 20, 1).name('Vortex count').onChange(() => buildVortices())
+    gui.add(params, 'vortexRadius', 20, 200, 1).name('Vortex radius')
+    gui.add(params, 'vortexStrength', 0, 2.5, 0.01).name('Vortex strength')
+    gui.add(params, 'vortexAxisJitter', 0, 0.8, 0.01).name('Vortex jitter')
+    gui.add(params, 'densityFieldScale', 0.005, 0.05, 0.001).name('Density scale')
+    gui.add(params, 'clumpStrength', 0, 1.2, 0.01).name('Clump strength')
+    gui.add(params, 'airyStrength', 0, 1.0, 0.01).name('Airy strength')
+    gui.add(params, 'shapeIrregularity', 0, 0.5, 0.01).name('Shape irregularity').onChange(() => initParticles())
+    gui.add(params, 'shapeNoiseScale', 0.5, 8, 0.1).name('Shape scale').onChange(() => initParticles())
     gui.add(params, 'inwardStrength', 0, 0.3, 0.01).name('Inward')
     gui.add(params, 'timeSpeed', 0.02, 1.5, 0.01).name('Time speed')
     gui.add(params, 'pointSize', 0.5, 10, 0.5).onChange(v => material.size = v)
