@@ -18,7 +18,7 @@
   let branches = []
   let segments = []
 
-  const params = { step:16, angleJitter:0.5, branchProb:0.25, initialLife:90, splitLifeFactor:0.62, lineWidth:1.2, saturation:0.55, lightness:0.50, curveStrength:1.4, fadeAlpha:0.02, stepsPerFrame:1, maxSegments:8000, seedSpread:220, seedSpeed:1.6, seedInterval:6 }
+  const params = { step:16, angleJitter:0.5, branchProb:0.25, initialLife:80, splitLifeFactor:0.62, lineWidth:1.2, saturation:0.55, lightness:0.50, curveStrength:1.4, fadeAlpha:0.02, stepsPerFrame:1, maxSegments:8000, seedSpread:220, seedSpeed:1.6, seedInterval:6 }
 
   function seedBranch(x){
     const sx = (typeof x === 'number') ? x : (canvas.width/2 + rand(-params.seedSpread, params.seedSpread))
