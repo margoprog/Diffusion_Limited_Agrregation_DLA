@@ -33,8 +33,8 @@ controls.autoRotateSpeed = 2
 
 // Parameters
 const params = {
-  particleCount: 5000,
-  volumeType: 'cube', // 'cube' or 'sphere'
+  particleCount: 8000,
+  volumeType: 'sphere', // 'cube' or 'sphere'
   volumeSize: 200,
   noiseScale: 0.005,
   speed: 0.1,
@@ -112,6 +112,7 @@ function initParticles() {
 
 function updateParticles() {
   const positions = geometry.attributes.position.array
+  const maxRadius = params.volumeSize * 0.5
 
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
@@ -124,14 +125,31 @@ function updateParticles() {
     p.vel.copy(flow).multiplyScalar(params.speed)
     p.pos.add(p.vel)
 
-    // Boundary wrapping (cube)
-    const half = params.volumeSize * 0.5
-    if (p.pos.x > half) p.pos.x -= params.volumeSize
-    if (p.pos.x < -half) p.pos.x += params.volumeSize
-    if (p.pos.y > half) p.pos.y -= params.volumeSize
-    if (p.pos.y < -half) p.pos.y += params.volumeSize
-    if (p.pos.z > half) p.pos.z -= params.volumeSize
-    if (p.pos.z < -half) p.pos.z += params.volumeSize
+    // Boundary wrapping based on volume type
+    if (params.volumeType === 'sphere') {
+      // Sphere boundary: reset particle if outside sphere radius
+      const distFromCenter = p.pos.length()
+      if (distFromCenter > maxRadius) {
+        // Reset to random point in sphere
+        const radius = (Math.random() ** (1/3)) * maxRadius
+        const theta = Math.random() * Math.PI * 2
+        const phi = Math.acos(2 * Math.random() - 1)
+        p.pos.set(
+          radius * Math.sin(phi) * Math.cos(theta),
+          radius * Math.sin(phi) * Math.sin(theta),
+          radius * Math.cos(phi)
+        )
+      }
+    } else {
+      // Cube boundary
+      const half = params.volumeSize * 0.5
+      if (p.pos.x > half) p.pos.x -= params.volumeSize
+      if (p.pos.x < -half) p.pos.x += params.volumeSize
+      if (p.pos.y > half) p.pos.y -= params.volumeSize
+      if (p.pos.y < -half) p.pos.y += params.volumeSize
+      if (p.pos.z > half) p.pos.z -= params.volumeSize
+      if (p.pos.z < -half) p.pos.z += params.volumeSize
+    }
 
     positions[i * 3] = p.pos.x
     positions[i * 3 + 1] = p.pos.y
