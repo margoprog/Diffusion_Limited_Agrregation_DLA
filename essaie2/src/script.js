@@ -18,14 +18,18 @@
   let branches = []
   let segments = []
 
-  const params = { step:16, angleJitter:0.7, branchProb:0.38, initialLife:150, splitLifeFactor:0.62, lineWidth:1.8, saturation:0.82, lightness:0.58, curveStrength:1.4, fadeAlpha:0.02, stepsPerFrame:1, maxSegments:8000, seedSpread:220 }
+  const params = { step:16, angleJitter:0.5, branchProb:0.25, initialLife:90, splitLifeFactor:0.62, lineWidth:1.2, saturation:0.55, lightness:0.50, curveStrength:1.4, fadeAlpha:0.02, stepsPerFrame:1, maxSegments:8000, seedSpread:220, seedSpeed:1.6, seedInterval:6 }
 
   function seedBranch(x){
     const sx = (typeof x === 'number') ? x : (canvas.width/2 + rand(-params.seedSpread, params.seedSpread))
     branches.push({ x: sx, y: 24, angle: Math.PI/2, life: params.initialLife, depth:0, age:0 })
   }
 
-  function reset(){ branches=[]; segments=[]; seedBranch(canvas.width/2); ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height) }
+  // moving seed head for continuous "snake-like" diffusion
+  let seedX = canvas.width/2
+  let seedTimer = 0
+
+  function reset(){ branches=[]; segments=[]; seedX = canvas.width/2; seedTimer = 0; seedBranch(seedX); ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height) }
 
   function hslCss(h,s,l){ return `hsl(${Math.round(h)} ${Math.round(s*100)}% ${Math.round(l*100)}%)` }
 
@@ -131,9 +135,19 @@
   let running=false
   function startLoop(){ if(running) return; running=true; requestAnimationFrame(loop) }
   function stopLoop(){ running=false }
-  function loop(){ if(!running) return; ctx.fillStyle=`rgba(0,0,0,${params.fadeAlpha})`; ctx.fillRect(0,0,canvas.width,canvas.height); for(let i=0;i<params.stepsPerFrame;i++) stepBranches(); // if no active branches, seed a new one to keep animation continuous
-    if(branches.length===0){ seedBranch() }
-    requestAnimationFrame(loop) }
+  function loop(){ if(!running) return;
+    // move seed head
+    seedX += params.seedSpeed
+    if(seedX > canvas.width + params.seedSpread) seedX = -params.seedSpread
+
+    // periodic seeding along the moving head to create a continuous trail
+    seedTimer--
+    if(seedTimer <= 0){ seedBranch(seedX); seedTimer = Math.max(1, Math.floor(params.seedInterval)) }
+
+    ctx.fillStyle=`rgba(0,0,0,${params.fadeAlpha})`; ctx.fillRect(0,0,canvas.width,canvas.height);
+    for(let i=0;i<params.stepsPerFrame;i++) stepBranches();
+    requestAnimationFrame(loop)
+  }
 
   reset(); startLoop()
   addEventListener('keydown', e=>{ if(e.key==='r'||e.key==='R'){ reset(); startLoop() } if(e.key==='s'||e.key==='S') stopLoop(); if(e.key==='g'||e.key==='G') startLoop() })
