@@ -34,32 +34,42 @@ const params = {
   particleCount: 8000,
   volumeType: 'sphere',
   volumeSize: 200,
-  noiseScale: 0.015,
-  speed: 0.1,
+  noiseScale: 0.01,
+  speed: 0.3,
   pointSize: 2,
   time: 0,
-  warpStrength: 0.2,
+  warpStrength: 0.08,
   warpScale: 0.005,
-  flowCoherence: 1.0
+  flowCoherence: 2.5,
+  velocityResponse: 0.08,
+  drag: 0.96,
+  circulationStrength: 0.35,
+  orbitCenterCount: 9,
+  orbitRadius: 70,
+  orbitStrength: 0.8,
+  orbitPull: 0.08,
+  inwardStrength: 0.06,
+  timeSpeed: 0.2
 }
 
 // Curl Noise 3D: compute curl of noise field (∇ × F)
 function curlNoise3D(x, y, z, eps = 0.001) {
   // ∇ × F = (∂Fz/∂y - ∂Fy/∂z, ∂Fx/∂z - ∂Fz/∂x, ∂Fy/∂x - ∂Fx/∂y)
+  const e = eps * params.flowCoherence
   
-  const n_xy_eps = noise3D(x, y + eps, z)
-  const n_xy_neg = noise3D(x, y - eps, z)
-  const n_xz_eps = noise3D(x, y, z + eps)
-  const n_xz_neg = noise3D(x, y, z - eps)
-  const n_yz_eps = noise3D(x + eps, y, z)
-  const n_yz_neg = noise3D(x - eps, y, z)
+  const n_xy_eps = noise3D(x, y + e, z)
+  const n_xy_neg = noise3D(x, y - e, z)
+  const n_xz_eps = noise3D(x, y, z + e)
+  const n_xz_neg = noise3D(x, y, z - e)
+  const n_yz_eps = noise3D(x + e, y, z)
+  const n_yz_neg = noise3D(x - e, y, z)
   
-  const dFz_dy = (n_xy_eps - n_xy_neg) / (2 * eps)
-  const dFy_dz = (n_xz_eps - n_xz_neg) / (2 * eps)
-  const dFx_dz = (n_xz_eps - n_xz_neg) / (2 * eps)
-  const dFz_dx = (n_yz_eps - n_yz_neg) / (2 * eps)
-  const dFy_dx = (n_yz_eps - n_yz_neg) / (2 * eps)
-  const dFx_dy = (n_xy_eps - n_xy_neg) / (2 * eps)
+  const dFz_dy = (n_xy_eps - n_xy_neg) / (2 * e)
+  const dFy_dz = (n_xz_eps - n_xz_neg) / (2 * e)
+  const dFx_dz = (n_xz_eps - n_xz_neg) / (2 * e)
+  const dFz_dx = (n_yz_eps - n_yz_neg) / (2 * e)
+  const dFy_dx = (n_yz_eps - n_yz_neg) / (2 * e)
+  const dFx_dy = (n_xy_eps - n_xy_neg) / (2 * e)
   
   const curl_x = dFz_dy - dFy_dz
   const curl_y = dFx_dz - dFz_dx
@@ -93,9 +103,40 @@ function domainWarp(x, y, z, time) {
 
 let particles = []
 let geometry, material, points
+let orbitCenters = []
+
+function buildOrbitCenters() {
+  orbitCenters = []
+  const shell = params.volumeSize * 0.38
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+
+  for (let i = 0; i < params.orbitCenterCount; i++) {
+    const t = (i + 0.5) / params.orbitCenterCount
+    const y = 1 - 2 * t
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const theta = i * goldenAngle
+
+    const pos = new THREE.Vector3(
+      Math.cos(theta) * r * shell,
+      y * shell,
+      Math.sin(theta) * r * shell
+    )
+
+    const axis = new THREE.Vector3(
+      noise3D(pos.x * 0.02 + 7.1, pos.y * 0.02, pos.z * 0.02),
+      noise3D(pos.x * 0.02, pos.y * 0.02 + 13.7, pos.z * 0.02),
+      noise3D(pos.x * 0.02, pos.y * 0.02, pos.z * 0.02 + 19.3)
+    )
+    if (axis.lengthSq() < 1e-6) axis.set(0, 1, 0)
+    axis.normalize()
+
+    orbitCenters.push({ pos, axis })
+  }
+}
 
 function initParticles() {
   if (points) scene.remove(points)
+  buildOrbitCenters()
   
   particles = []
   const positions = new Float32Array(params.particleCount * 3)
@@ -144,6 +185,14 @@ function initParticles() {
 function updateParticles() {
   const positions = geometry.attributes.position.array
   const maxRadius = params.volumeSize * 0.5
+  const center = new THREE.Vector3(0, 0, 0)
+  const tmpDesired = new THREE.Vector3()
+  const tmpCirculation = new THREE.Vector3()
+  const tmpLocalOrbit = new THREE.Vector3()
+  const tmpToCenter = new THREE.Vector3()
+  const tmpTangent = new THREE.Vector3()
+  const tmpRadial = new THREE.Vector3()
+  const t = params.time * params.timeSpeed
   
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
@@ -153,17 +202,51 @@ function updateParticles() {
       p.pos.x * params.noiseScale,
       p.pos.y * params.noiseScale,
       p.pos.z * params.noiseScale,
-      params.time * 0.5
+      t
     )
     
     // Step 1: Query curl noise field at warped position
     const curlVector = curlNoise3D(warpedPos.x, warpedPos.y, warpedPos.z)
+
+    // Large-scale circulation around Y axis to make visible currents
+    const radius = p.pos.length()
+    const radialFactor = Math.max(0, 1 - radius / maxRadius)
+    tmpCirculation.set(-p.pos.z, 0, p.pos.x)
+    if (tmpCirculation.lengthSq() > 0) tmpCirculation.normalize()
+    tmpCirculation.multiplyScalar(params.circulationStrength * radialFactor)
+
+    // Gentle inward drift to keep stable circulation zones
+    tmpRadial.copy(center).sub(p.pos)
+    if (tmpRadial.lengthSq() > 0) tmpRadial.normalize()
+    tmpRadial.multiplyScalar(params.inwardStrength)
+
+    // Local orbital tendency around invisible centers
+    tmpLocalOrbit.set(0, 0, 0)
+    for (let ci = 0; ci < orbitCenters.length; ci++) {
+      const c = orbitCenters[ci]
+      tmpToCenter.copy(p.pos).sub(c.pos)
+      const d = tmpToCenter.length()
+      if (d < 1e-5 || d > params.orbitRadius) continue
+
+      const falloff = 1 - d / params.orbitRadius
+      tmpTangent.crossVectors(c.axis, tmpToCenter)
+      if (tmpTangent.lengthSq() > 1e-10) {
+        tmpTangent.normalize().multiplyScalar(params.orbitStrength * falloff * falloff)
+        tmpLocalOrbit.add(tmpTangent)
+      }
+
+      // slight inward pull to keep the particle captured by local vortex zones
+      tmpToCenter.multiplyScalar(1 / d)
+      tmpLocalOrbit.addScaledVector(tmpToCenter, -params.orbitPull * falloff)
+    }
     
     // Step 2: Get directional vector from curl noise
-    p.vel.copy(curlVector).multiplyScalar(params.speed)
+    tmpDesired.copy(curlVector).add(tmpCirculation).add(tmpLocalOrbit).add(tmpRadial)
+    p.vel.lerp(tmpDesired, params.velocityResponse)
+    p.vel.multiplyScalar(params.drag)
     
     // Step 3: Move particle in that direction
-    p.pos.add(p.vel)
+    p.pos.addScaledVector(p.vel, params.speed)
     
     // Step 4: Apply boundary constraints (continuous field - no randomness)
     if (params.volumeType === 'sphere') {
@@ -218,6 +301,16 @@ import('lil-gui').then(mod => {
     gui.add(params, 'volumeSize', 50, 500, 10).onChange(() => initParticles())
     gui.add(params, 'noiseScale', 0.001, 0.02, 0.001)
     gui.add(params, 'speed', 0.01, 0.5, 0.01)
+    gui.add(params, 'flowCoherence', 0.8, 5, 0.1).name('Flow coherence')
+    gui.add(params, 'velocityResponse', 0.01, 0.3, 0.01).name('Response')
+    gui.add(params, 'drag', 0.85, 0.999, 0.001).name('Drag')
+    gui.add(params, 'circulationStrength', 0, 1.5, 0.01).name('Circulation')
+    gui.add(params, 'orbitCenterCount', 1, 16, 1).name('Orbit centers').onChange(() => buildOrbitCenters())
+    gui.add(params, 'orbitRadius', 20, 180, 1).name('Orbit radius')
+    gui.add(params, 'orbitStrength', 0, 2, 0.01).name('Orbit strength')
+    gui.add(params, 'orbitPull', 0, 0.4, 0.01).name('Orbit pull')
+    gui.add(params, 'inwardStrength', 0, 0.3, 0.01).name('Inward')
+    gui.add(params, 'timeSpeed', 0.02, 1.5, 0.01).name('Time speed')
     gui.add(params, 'pointSize', 0.5, 10, 0.5).onChange(v => material.size = v)
     gui.add(params, 'warpStrength', 0, 1, 0.01).name('Warp strength')
     gui.add(params, 'warpScale', 0.001, 0.05, 0.001).name('Warp scale')
