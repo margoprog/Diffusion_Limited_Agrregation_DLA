@@ -81,6 +81,8 @@ const rand = (min, max) =>
 
 // collect particle positions for vertex coloring
 const positions = []
+// collect line segment positions for a single LineSegments buffer
+const linePositions = []
 
 /**
  * Branch Structure
@@ -144,9 +146,12 @@ while(branches.length > 0)
 
     const curve = new THREE.CatmullRomCurve3([p0, mid, p2])
     const curvePoints = curve.getPoints(8)
-    const curveGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
-    const line = new THREE.Line(curveGeometry, material)
-    scene.add(line)
+    // append consecutive point pairs to the shared linePositions array (LineSegments)
+    for (let j = 0; j < curvePoints.length - 1; j++) {
+        const a = curvePoints[j]
+        const b = curvePoints[j + 1]
+        linePositions.push(a.x, a.y, a.z, b.x, b.y, b.z)
+    }
 
     branch.x = nx
     branch.y = ny
@@ -216,12 +221,26 @@ if (positions.length > 0) {
     const particleCount = positions.length / 3
     const colors = []
 
-    // map color by vertex progression (index) blending red -> blue
+    // map hue based on camera-space depth so vertices in front are red, behind are blue
+    const tmp = new THREE.Vector3()
+    let minZ = Infinity, maxZ = -Infinity
     for (let i = 0; i < particleCount; i++) {
-        const t = particleCount > 1 ? i / (particleCount - 1) : 0
-        const c = new THREE.Color(1, 0, 0) // red
-        c.lerp(new THREE.Color(0, 0, 1), t) // blend towards blue
-        colors.push(c.r, c.g, c.b)
+        tmp.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
+        tmp.applyMatrix4(camera.matrixWorldInverse)
+        const z = tmp.z
+        if (z < minZ) minZ = z
+        if (z > maxZ) maxZ = z
+    }
+    const rangeZ = (maxZ - minZ) || 1
+    for (let i = 0; i < particleCount; i++) {
+        tmp.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
+        tmp.applyMatrix4(camera.matrixWorldInverse)
+        const z = tmp.z
+        const t = (z - minZ) / rangeZ // 0..1 (0 = nearest/front)
+        const hue = t * 240 // 0° (red) -> 240° (blue)
+        const color = new THREE.Color()
+        color.setHSL(hue / 360, 1, 0.5)
+        colors.push(color.r, color.g, color.b)
     }
 
     const pointsGeometry = new THREE.BufferGeometry()
@@ -231,6 +250,14 @@ if (positions.length > 0) {
     const pointsMaterial = new THREE.PointsMaterial({ size: 2, vertexColors: true })
     const points = new THREE.Points(pointsGeometry, pointsMaterial)
     scene.add(points)
+    // Build a single LineSegments from collected linePositions to reduce draw calls
+    if (linePositions.length > 0) {
+        const lineGeom = new THREE.BufferGeometry()
+        lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3))
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff })
+        const lines = new THREE.LineSegments(lineGeom, lineMat)
+        scene.add(lines)
+    }
 }
 
 /**

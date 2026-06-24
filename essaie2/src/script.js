@@ -24,21 +24,40 @@
 
   function hslCss(h,s,l){ return `hsl(${Math.round(h)} ${Math.round(s*100)}% ${Math.round(l*100)}%)` }
 
-  // drawSegment accepts optional index/total to map color across progression
-  function drawSegment(s, idx = 0, total = 1){
+  function getYRange(){
+    if(segments.length === 0) return { min: 0, max: canvas.height }
+    let min = Infinity, max = -Infinity
+    for(let i=0;i<segments.length;i++){
+      const s = segments[i]
+      const my = (s.y1 + s.y2) * 0.5
+      if(my < min) min = my
+      if(my > max) max = my
+    }
+    return { min, max }
+  }
+
+  // drawSegment accepts optional global range for Y mapping
+  function drawSegment(s, idx = 0, total = 1, globalY = null){
     const dx = s.x2 - s.x1, dy = s.y2 - s.y1
     const len = Math.hypot(dx,dy) || 1
     const uy = dy/len
     const lightFactor = 0.15 * ((-uy + 1)/2)
     const l = Math.min(1, Math.max(0, params.lightness + lightFactor))
 
-    // create a linear gradient from segment start to end: red -> blue
-    const grad = ctx.createLinearGradient(s.x1, s.y1, s.x2, s.y2)
-    const red = hslCss(0, params.saturation, l)
-    const blue = hslCss(240, params.saturation, l)
-    grad.addColorStop(0, red)
-    grad.addColorStop(1, blue)
-    ctx.strokeStyle = grad
+    // determine global Y range and compute t based on segment midpoint Y
+    let t = 0
+    if(globalY){
+      const midY = (s.y1 + s.y2) * 0.5
+      const minY = globalY.min
+      const maxY = globalY.max
+      const range = (maxY - minY) || 1
+      t = (midY - minY) / range
+    }
+    // map hue from red (0°) to blue (240°) based on global t
+    const hue = 0 + t * 240
+    const h = (hue + ((s.depth||0)*3) + ((s.age||0)*0.02) + 360) % 360
+
+    ctx.strokeStyle = hslCss(h, params.saturation, l)
     ctx.lineWidth = params.lineWidth
 
     // draw as a quadratic curve for smoother branches
@@ -57,15 +76,17 @@
 
   function stepBranches(){
     const alive = []
+    // compute global Y range once per step to avoid O(n^2)
+    const globalY = getYRange()
     for(let i=0;i<branches.length;i++){
       const b = branches[i]
       if(b.life<=0) continue
       const nx = b.x + Math.cos(b.angle)*params.step
       const ny = b.y + Math.sin(b.angle)*params.step
       const seg = { x1:b.x,y1:b.y,x2:nx,y2:ny,depth:b.depth||0,age:b.age||0 }
-        segments.push(seg)
-        // draw with progression index (just-added segment is last)
-        drawSegment(seg, segments.length - 1, segments.length)
+      segments.push(seg)
+      // draw with global mapping (uses precomputed globalY)
+      drawSegment(seg, segments.length - 1, segments.length, globalY)
       b.x = nx; b.y = ny; b.angle += rand(-params.angleJitter, params.angleJitter); b.life--; b.age = (b.age||0)+1
       if(Math.random() < params.branchProb && b.life > 2){ const childLife = Math.max(2, Math.floor(b.life * params.splitLifeFactor)); alive.push({ x:b.x,y:b.y,angle:b.angle+rand(-0.6,0.6),life:childLife,depth:(b.depth||0)+1,age:0 }) }
       if(b.life>0) alive.push(b)
@@ -73,9 +94,27 @@
     branches = alive
   }
 
-  function redrawSegments(){ ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height); for(let i=0;i<segments.length;i++) drawSegment(segments[i], i, segments.length) }
+  function redrawSegments(){ ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height); const globalY = getYRange(); for(let i=0;i<segments.length;i++) drawSegment(segments[i], i, segments.length, globalY) }
 
-  import('lil-gui').then(mod=>{ try{ const GUI = mod.default; const gui = new GUI({ width:300 }); gui.add(params,'step',1,40,1).name('Step'); gui.add(params,'angleJitter',0,1,0.01).name('Angle jitter'); gui.add(params,'branchProb',0,1,0.001).name('Branch prob'); gui.add(params,'initialLife',4,800,1).name('Initial life'); gui.add(params,'splitLifeFactor',0,1,0.01).name('Split life'); gui.add(params,'lineWidth',0.2,8,0.1).name('Line width').onChange(v=>{params.lineWidth=v;redrawSegments()}); gui.add(params,'saturation',0,1,0.01).name('Saturation').onChange(redrawSegments); gui.add(params,'lightness',0,1,0.01).name('Lightness').onChange(redrawSegments); const actions={Stop:()=>stopLoop(),Start:()=>startLoop(),Reset:()=>{reset();startLoop()}}; gui.add(actions,'Stop').name('Stop'); gui.add(actions,'Start').name('Start'); gui.add(actions,'Reset').name('Reset') }catch(e){console.warn('GUI failed',e)} }).catch(()=>{})
+  import('lil-gui').then(mod=>{ try{
+      const GUI = mod.default
+      const gui = new GUI({ width:300 })
+      const folder = gui.addFolder('controls')
+      folder.add(params,'step',1,40,1).name('Step')
+      folder.add(params,'angleJitter',0,1,0.01).name('Angle jitter')
+      folder.add(params,'branchProb',0,1,0.001).name('Branch prob')
+      folder.add(params,'initialLife',4,800,1).name('Initial life')
+      folder.add(params,'splitLifeFactor',0,1,0.01).name('Split life')
+      folder.add(params,'lineWidth',0.2,8,0.1).name('Line width').onChange(v=>{params.lineWidth=v;redrawSegments()})
+      folder.add(params,'saturation',0,1,0.01).name('Saturation').onChange(redrawSegments)
+      folder.add(params,'lightness',0,1,0.01).name('Lightness').onChange(redrawSegments)
+      const actions={Stop:()=>stopLoop(),Start:()=>startLoop(),Reset:()=>{reset();startLoop()}}
+      gui.add(actions,'Stop').name('Stop')
+      gui.add(actions,'Start').name('Start')
+      gui.add(actions,'Reset').name('Reset')
+      // close the controls folder so it's collapsed by default, and close the GUI
+      try{ folder.close(); gui.close() }catch(e){ /* ignore if API differs */ }
+  }catch(e){console.warn('GUI failed',e)} }).catch(()=>{})
 
   let running=false
   function startLoop(){ if(running) return; running=true; requestAnimationFrame(loop) }
