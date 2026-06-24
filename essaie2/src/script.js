@@ -40,14 +40,20 @@ const params = {
   time: 0,
   warpStrength: 0.08,
   warpScale: 0.005,
+  mediumCurlScale: 0.008,
+  mediumCurlStrength: 0.55,
+  microCurlScale: 0.06,
+  microCurlStrength: 0.28,
   flowCoherence: 2.5,
   velocityResponse: 0.08,
   drag: 0.96,
   circulationStrength: 0.35,
-  vortexCount: 9,
-  vortexRadius: 70,
-  vortexStrength: 0.85,
-  vortexAxisJitter: 0.2,
+  vortexCount: 140,
+  vortexRadius: 36,
+  vortexStrength: 0.7,
+  vortexAxisJitter: 0.25,
+  vortexSizeVariation: 0.7,
+  vortexStrengthVariation: 0.8,
   densityFieldScale: 0.015,
   clumpStrength: 0.22,
   airyStrength: 0.14,
@@ -128,10 +134,15 @@ let particles = []
 let geometry, material, points
 let vortices = []
 
+function hash01(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453123
+  return x - Math.floor(x)
+}
+
 function buildVortices() {
   vortices = []
 
-  const shell = params.volumeSize * 0.38
+  const maxR = params.volumeSize * 0.46
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
   for (let i = 0; i < params.vortexCount; i++) {
@@ -140,10 +151,13 @@ function buildVortices() {
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = i * goldenAngle
 
+    // volumetric placement: not on a shell, distributed in the whole sphere
+    const rr = Math.cbrt(hash01(i + 1.73)) * maxR
+
     const center = new THREE.Vector3(
-      Math.cos(theta) * r * shell,
-      y * shell,
-      Math.sin(theta) * r * shell
+      Math.cos(theta) * r * rr,
+      y * rr,
+      Math.sin(theta) * r * rr
     )
 
     // deterministic axis per vortex
@@ -155,7 +169,10 @@ function buildVortices() {
     if (axis.lengthSq() < 1e-8) axis.set(0, 1, 0)
     axis.normalize()
 
-    vortices.push({ center, axis, seed: i * 17.123 })
+    const radiusFactor = 1 - params.vortexSizeVariation * 0.5 + hash01(i * 3.11 + 9.3) * params.vortexSizeVariation
+    const strengthFactor = 1 - params.vortexStrengthVariation * 0.5 + hash01(i * 5.93 + 4.7) * params.vortexStrengthVariation
+
+    vortices.push({ center, axis, seed: i * 17.123, radiusFactor, strengthFactor })
   }
 }
 
@@ -193,7 +210,21 @@ function initParticles() {
       z = (Math.random() - 0.5) * params.volumeSize
     }
     
-    particles.push({ pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3() })
+    const pPos = new THREE.Vector3(x, y, z)
+    const seedBase = domainWarp(pPos.x * params.noiseScale, pPos.y * params.noiseScale, pPos.z * params.noiseScale, t)
+    const seedMedium = domainWarp(pPos.x * params.mediumCurlScale, pPos.y * params.mediumCurlScale, pPos.z * params.mediumCurlScale, t * 0.7)
+    const seedMicro = domainWarp(
+      pPos.x * params.microCurlScale + 31.7,
+      pPos.y * params.microCurlScale - 19.4,
+      pPos.z * params.microCurlScale + 7.9,
+      t * 1.6
+    )
+    const pVel = curlNoise3D(seedBase.x, seedBase.y, seedBase.z)
+      .add(curlNoise3D(seedMedium.x, seedMedium.y, seedMedium.z).multiplyScalar(params.mediumCurlStrength))
+      .add(curlNoise3D(seedMicro.x, seedMicro.y, seedMicro.z).multiplyScalar(params.microCurlStrength))
+      .multiplyScalar(0.25)
+
+    particles.push({ pos: pPos, vel: pVel })
     positions[i * 3] = x
     positions[i * 3 + 1] = y
     positions[i * 3 + 2] = z
@@ -230,6 +261,8 @@ function updateParticles() {
   const tmpRadial = new THREE.Vector3()
   const tmpDensityGrad = new THREE.Vector3()
   const tmpDir = new THREE.Vector3()
+  const tmpMediumCurl = new THREE.Vector3()
+  const tmpMicroCurl = new THREE.Vector3()
   const t = params.time * params.timeSpeed
   const ge = Math.max(0.5, params.volumeSize * 0.01)
   
@@ -246,6 +279,23 @@ function updateParticles() {
     
     // Step 1: Query curl noise field at warped position
     const curlVector = curlNoise3D(warpedPos.x, warpedPos.y, warpedPos.z)
+
+    // Hierarchical turbulence: medium currents + tiny local vortices
+    const mediumPos = domainWarp(
+      p.pos.x * params.mediumCurlScale,
+      p.pos.y * params.mediumCurlScale,
+      p.pos.z * params.mediumCurlScale,
+      t * 0.7
+    )
+    tmpMediumCurl.copy(curlNoise3D(mediumPos.x, mediumPos.y, mediumPos.z)).multiplyScalar(params.mediumCurlStrength)
+
+    const microPos = domainWarp(
+      p.pos.x * params.microCurlScale + 31.7,
+      p.pos.y * params.microCurlScale - 19.4,
+      p.pos.z * params.microCurlScale + 7.9,
+      t * 1.6
+    )
+    tmpMicroCurl.copy(curlNoise3D(microPos.x, microPos.y, microPos.z)).multiplyScalar(params.microCurlStrength)
 
     // Large-scale circulation around Y axis to make visible currents
     const radius = p.pos.length()
@@ -282,10 +332,10 @@ function updateParticles() {
 
     // Smaller local vortices inside the global flow
     tmpVortex.set(0, 0, 0)
-    const vr = params.vortexRadius
-    const vr2 = vr * vr
     for (let vi = 0; vi < vortices.length; vi++) {
       const v = vortices[vi]
+      const vr = Math.max(8, params.vortexRadius * v.radiusFactor)
+      const vr2 = vr * vr
 
       tmpToVortex.copy(p.pos).sub(v.center)
       const d2 = tmpToVortex.lengthSq()
@@ -304,14 +354,21 @@ function updateParticles() {
 
       tmpTangential.crossVectors(tmpLocalAxis, tmpToVortex)
       if (tmpTangential.lengthSq() > 0) {
-        const vortexAmp = params.vortexStrength * falloff * falloff
+        const vortexAmp = params.vortexStrength * v.strengthFactor * falloff * falloff
         tmpTangential.normalize().multiplyScalar(vortexAmp)
         tmpVortex.add(tmpTangential)
       }
     }
     
     // Step 2: Get directional vector from curl noise
-    tmpDesired.copy(curlVector).add(tmpCirculation).add(tmpVortex).add(tmpRadial).add(tmpDensityGrad)
+    tmpDesired
+      .copy(curlVector)
+      .add(tmpMediumCurl)
+      .add(tmpMicroCurl)
+      .add(tmpCirculation)
+      .add(tmpVortex)
+      .add(tmpRadial)
+      .add(tmpDensityGrad)
     p.vel.lerp(tmpDesired, params.velocityResponse)
     p.vel.multiplyScalar(params.drag)
     
@@ -373,15 +430,21 @@ import('lil-gui').then(mod => {
     gui.add(params, 'volumeType', ['cube', 'sphere']).onChange(() => initParticles())
     gui.add(params, 'volumeSize', 50, 500, 10).onChange(() => { initParticles(); buildVortices() })
     gui.add(params, 'noiseScale', 0.001, 0.02, 0.001)
+    gui.add(params, 'mediumCurlScale', 0.002, 0.03, 0.001).name('Medium scale')
+    gui.add(params, 'mediumCurlStrength', 0, 1.5, 0.01).name('Medium strength')
+    gui.add(params, 'microCurlScale', 0.01, 0.2, 0.001).name('Micro scale')
+    gui.add(params, 'microCurlStrength', 0, 1.2, 0.01).name('Micro strength')
     gui.add(params, 'speed', 0.01, 0.5, 0.01)
     gui.add(params, 'flowCoherence', 0.8, 5, 0.1).name('Flow coherence')
     gui.add(params, 'velocityResponse', 0.01, 0.3, 0.01).name('Response')
     gui.add(params, 'drag', 0.85, 0.999, 0.001).name('Drag')
     gui.add(params, 'circulationStrength', 0, 1.5, 0.01).name('Circulation')
-    gui.add(params, 'vortexCount', 1, 20, 1).name('Vortex count').onChange(() => buildVortices())
-    gui.add(params, 'vortexRadius', 20, 200, 1).name('Vortex radius')
+    gui.add(params, 'vortexCount', 10, 260, 1).name('Vortex count').onChange(() => buildVortices())
+    gui.add(params, 'vortexRadius', 8, 120, 1).name('Vortex radius')
     gui.add(params, 'vortexStrength', 0, 2.5, 0.01).name('Vortex strength')
     gui.add(params, 'vortexAxisJitter', 0, 0.8, 0.01).name('Vortex jitter')
+    gui.add(params, 'vortexSizeVariation', 0, 1.2, 0.01).name('Vortex size var').onChange(() => buildVortices())
+    gui.add(params, 'vortexStrengthVariation', 0, 1.2, 0.01).name('Vortex power var').onChange(() => buildVortices())
     gui.add(params, 'densityFieldScale', 0.005, 0.05, 0.001).name('Density scale')
     gui.add(params, 'clumpStrength', 0, 1.2, 0.01).name('Clump strength')
     gui.add(params, 'airyStrength', 0, 1.0, 0.01).name('Airy strength')
