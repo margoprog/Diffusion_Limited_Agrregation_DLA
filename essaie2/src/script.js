@@ -18,7 +18,7 @@
   let branches = []
   let segments = []
 
-  const params = { step:16, angleJitter:0.7, branchProb:0.38, initialLife:150, splitLifeFactor:0.62, lineWidth:1.8, saturation:0.82, lightness:0.58, curveStrength:1.0 }
+  const params = { step:16, angleJitter:0.7, branchProb:0.38, initialLife:150, splitLifeFactor:0.62, lineWidth:1.8, saturation:0.82, lightness:0.58, curveStrength:1.4 }
 
   function reset(){ branches=[]; segments=[]; branches.push({ x: canvas.width/2, y: 24, angle: Math.PI/2, life: params.initialLife, depth:0, age:0 }); ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height) }
 
