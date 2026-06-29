@@ -5,12 +5,14 @@ import { createNoise3D } from 'simplex-noise'
 
 const canvas = document.querySelector('canvas.webgl')
 const noise3D = createNoise3D()
-const texture = new THREE.TextureLoader().load('/textures/particles/3.png')
+const texture = new THREE.TextureLoader().load('/textures/particles/14.png')
 
 // Scene setup
 const scene = new THREE.Scene()
 // UI background color (match CSS)
 scene.background = new THREE.Color('#2deaa2')
+scene.background = new THREE.Color('#000000')
+
 
 const sizes = {
   width: window.innerWidth,
@@ -32,23 +34,25 @@ controls.autoRotate = false
 
 // Parameters
 const params = {
-  particleCount: 18000,
+  particleCount: 18600,
   volumeType: 'sphere',
-  volumeSize: 200,
+  volumeSize: 210,
   noiseScale: 0.01,
-  speed: 0.14,
-  pointSize: 1.5,
+  speed: 0.39,
+  pointSize: 1.55,
   colorIntensity: 1.0,
   warpStrength: 0.08,
-  warpScale: 0.005,
+  warpStrength: 0.38,
+  warpScale: 0.012,
   flowCoherence: 2.5,
+  flowCoherence: 2.7,
   drag: 0.985,
   circulationStrength: 0.35,
   vortexCount: 140,
   vortexRadius: 36,
   vortexStrength: 0.7,
   trailLength: 18,
-  trailOpacity: 0.12
+  trailOpacity: 0.32
 }
 
 const fixed = {
@@ -288,14 +292,14 @@ function initParticles() {
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   
   material = new THREE.PointsMaterial({
-    color: 0xffffff,
+    color: 0xf3728f,
     size: params.pointSize,
     map: texture,
     transparent: true,
     opacity: 0.65,
     alphaTest: 0.5,
     depthWrite: false,
-    blending: THREE.AdditiveBlending
+    blending: THREE.NomalBlending
   })
   
   points = new THREE.Points(geometry, material)
