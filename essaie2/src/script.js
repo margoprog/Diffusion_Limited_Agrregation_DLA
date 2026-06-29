@@ -9,7 +9,8 @@ const texture = new THREE.TextureLoader().load('/textures/particles/3.png')
 
 // Scene setup
 const scene = new THREE.Scene()
-// scene.background = new THREE.Color(0x000000)
+// UI background color (match CSS)
+scene.background = new THREE.Color('#2deaa2')
 
 const sizes = {
   width: window.innerWidth,
@@ -36,7 +37,8 @@ const params = {
   volumeSize: 200,
   noiseScale: 0.01,
   speed: 0.14,
-  pointSize: 0.55,
+  pointSize: 1.5,
+  colorIntensity: 1.0,
   warpStrength: 0.08,
   warpScale: 0.005,
   flowCoherence: 2.5,
@@ -245,9 +247,7 @@ function initParticles() {
   
   particles = []
   const positions = new Float32Array(params.particleCount * 3)
-  const colorArray = new Float32Array(params.particleCount * 3)
   const t = simTime * fixed.timeSpeed
-  const halfVol = params.volumeSize * 0.5
   
   for (let i = 0; i < params.particleCount; i++) {
     let x, y, z
@@ -282,38 +282,15 @@ function initParticles() {
     positions[i * 3] = x
     positions[i * 3 + 1] = y
     positions[i * 3 + 2] = z
-    // initial color based on Y position (3-stop gradient: #2deaa2 -> #ff69bb -> #74b3f6)
-    const ty = Math.min(1, Math.max(0, (y + halfVol) / params.volumeSize))
-    // RGB: start=(45,234,162), mid=(255,105,187), end=(116,179,246)
-    const mixMid = (a, b, t) => a * (1 - t) + b * t
-    let rr, gg, bb
-    if (ty <= 0.5) {
-      const tt = ty * 2
-      rr = mixMid(45, 255, tt)
-      gg = mixMid(234, 105, tt)
-      bb = mixMid(162, 187, tt)
-    } else {
-      const tt = (ty - 0.5) * 2
-      rr = mixMid(255, 116, tt)
-      gg = mixMid(105, 179, tt)
-      bb = mixMid(187, 246, tt)
-    }
-    colorArray[i * 3] = rr / 255
-    colorArray[i * 3 + 1] = gg / 255
-    colorArray[i * 3 + 2] = bb / 255
   }
   
   geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  // per-vertex colors
-  colors = colorArray
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   
   material = new THREE.PointsMaterial({
-    // base color ignored when using vertexColors
+    color: 0xffffff,
     size: params.pointSize,
     map: texture,
-    vertexColors: true,
     transparent: true,
     opacity: 0.65,
     alphaTest: 0.5,
@@ -422,7 +399,6 @@ function updateParticles() {
   const densityPhase = frameCount % densityStride
   const ge = Math.max(0.5, params.volumeSize * 0.01)
 
-  const halfVol = params.volumeSize * 0.5
   // Compute center of mass to keep the whole cloud stable over long durations
   centerOfMass.set(0, 0, 0)
   for (let i = 0; i < particles.length; i++) {
@@ -603,30 +579,9 @@ function updateParticles() {
     positions[i * 3] = p.pos.x
     positions[i * 3 + 1] = p.pos.y
     positions[i * 3 + 2] = p.pos.z
-    // update color based on current Y position (3-stop gradient)
-    if (colors) {
-      const ty = Math.min(1, Math.max(0, (p.pos.y + halfVol) / params.volumeSize))
-      const mixMid = (a, b, t) => a * (1 - t) + b * t
-      let rr, gg, bb
-      if (ty <= 0.5) {
-        const tt = ty * 2
-        rr = mixMid(45, 255, tt)
-        gg = mixMid(234, 105, tt)
-        bb = mixMid(162, 187, tt)
-      } else {
-        const tt = (ty - 0.5) * 2
-        rr = mixMid(255, 116, tt)
-        gg = mixMid(105, 179, tt)
-        bb = mixMid(187, 246, tt)
-      }
-      colors[i * 3] = rr / 255
-      colors[i * 3 + 1] = gg / 255
-      colors[i * 3 + 2] = bb / 255
-    }
   }
   
   geometry.attributes.position.needsUpdate = true
-  if (geometry.attributes.color) geometry.attributes.color.needsUpdate = true
   if ((frameCount % fixed.trailUpdateSkip) === 0) updateTrails()
   simTime += 0.01
   frameCount++
